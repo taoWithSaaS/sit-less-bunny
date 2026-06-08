@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
     QWidget, QPushButton, QApplication, QGraphicsDropShadowEffect,
     QVBoxLayout, QLabel, QHBoxLayout, QSizePolicy
 )
+import winsound
 from bunny_renderer import BunnyRenderer
 
 
@@ -24,7 +25,7 @@ class BunnyWidget(QWidget):
     GROW_FACTOR = 1.65
     ANIMATION_FPS = 12  # 帧率
 
-    def __init__(self, grow_total_seconds=20, exercise_minutes=10, esc_exit=True, parent=None):
+    def __init__(self, grow_total_seconds=20, exercise_minutes=10, esc_exit=True, exercise_prompt="打开抖音肩颈操直播跟练吧~", parent=None):
         super().__init__(parent)
         self._frame = 0
         self._can_close = True  # 初始可关闭，放大后不可
@@ -36,6 +37,7 @@ class BunnyWidget(QWidget):
         self._esc_exit = esc_exit
         self._esc_count = 0
         self._esc_timer = None
+        self._exercise_prompt = exercise_prompt
         self._renderer = BunnyRenderer()
 
         self._setup_window()
@@ -66,7 +68,7 @@ class BunnyWidget(QWidget):
         layout.addWidget(spacer)
 
         # 提示文字
-        self._label = QLabel("该去运动啦！\n打开抖音直播跟练吧~")
+        self._label = QLabel(f"该去运动啦！\n{self._exercise_prompt}")
         self._label.setAlignment(Qt.AlignCenter)
         self._label.setStyleSheet("""
             QLabel {
@@ -289,9 +291,31 @@ class BunnyWidget(QWidget):
         """)
 
     def _finish_exercise(self):
-        """运动倒计时结束"""
-        self._can_close = True
+        """运动倒计时结束，显示回来工作按钮"""
+        # 播放系统提示音提醒运动结束
+        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         self._in_exercise_mode = False
+
+        # 更新文字提示
+        self._label.setText("运动结束！休息得不错~")
+        self._label.setStyleSheet("""
+            QLabel {
+                color: #4CAF50;
+                font-size: 42px;
+                font-weight: bold;
+                background: transparent;
+            }
+        """)
+
+        # 显示"我回来工作啦"按钮
+        self._btn.setText("💪 我回来工作啦！")
+        self._btn.disconnect()
+        self._btn.clicked.connect(self._on_back_to_work)
+        self._btn.show()
+
+    def _on_back_to_work(self):
+        """用户点击回来工作，关闭窗口并恢复计时"""
+        self._can_close = True
         self._anim_timer.stop()
         self.closed_by_user.emit()
         self.close()

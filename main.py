@@ -16,7 +16,7 @@ from bunny_widget import BunnyWidget
 
 
 # 配置常量
-REMINDER_INTERVAL_MINUTES = 25
+DEFAULT_REMINDER_MINUTES = 25
 WORK_START_HOUR = 9
 WORK_END_HOUR = 17
 CHECK_INTERVAL_MS = 30000  # 每30秒检查一次
@@ -39,6 +39,24 @@ EXERCISE_DURATION_PRESETS = [
 ]
 DEFAULT_EXERCISE_MINUTES = 10
 DEFAULT_ESC_EXIT = True
+DEFAULT_EXERCISE_PROMPT = "打开抖音肩颈操直播跟练吧~"
+
+# 运动提示语预设
+EXERCISE_PROMPT_PRESETS = [
+    ("抖音肩颈操直播", "打开抖音肩颈操直播跟练吧~"),
+    ("B站健身视频", "打开B站健身视频跟练吧~"),
+    ("Keep运动", "打开Keep跟练吧~"),
+    ("自由运动", "做做拉伸、跳跳操吧~"),
+]
+
+# 提醒间隔预设（名称, 分钟数）
+REMINDER_INTERVAL_PRESETS = [
+    ("25 分钟", 25),
+    ("30 分钟", 30),
+    ("35 分钟", 35),
+    ("40 分钟", 40),
+    ("45 分钟", 45),
+]
 
 # 配置文件路径
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -50,6 +68,8 @@ def load_config():
         "fullscreen_seconds": DEFAULT_FULLSCREEN_SECONDS,
         "exercise_minutes": DEFAULT_EXERCISE_MINUTES,
         "esc_exit": DEFAULT_ESC_EXIT,
+        "reminder_minutes": DEFAULT_REMINDER_MINUTES,
+        "exercise_prompt": DEFAULT_EXERCISE_PROMPT,
     }
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -176,6 +196,42 @@ class SedentaryReminder:
 
         menu.addMenu(exercise_menu)
 
+        # 提醒间隔 子菜单
+        interval_menu = QMenu("提醒间隔", menu)
+        interval_group = QActionGroup(interval_menu)
+        interval_group.setExclusive(True)
+
+        current_interval = self._config.get("reminder_minutes", DEFAULT_REMINDER_MINUTES)
+
+        for label, minutes in REMINDER_INTERVAL_PRESETS:
+            action = QAction(label, interval_menu, checkable=True)
+            action.setData(minutes)
+            if minutes == current_interval:
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, m=minutes: self._set_reminder_interval(m))
+            interval_group.addAction(action)
+            interval_menu.addAction(action)
+
+        menu.addMenu(interval_menu)
+
+        # 运动提示语 子菜单
+        prompt_menu = QMenu("运动提示语", menu)
+        prompt_group = QActionGroup(prompt_menu)
+        prompt_group.setExclusive(True)
+
+        current_prompt = self._config.get("exercise_prompt", DEFAULT_EXERCISE_PROMPT)
+
+        for label, prompt in EXERCISE_PROMPT_PRESETS:
+            action = QAction(label, prompt_menu, checkable=True)
+            action.setData(prompt)
+            if prompt == current_prompt:
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, p=prompt: self._set_exercise_prompt(p))
+            prompt_group.addAction(action)
+            prompt_menu.addAction(action)
+
+        menu.addMenu(prompt_menu)
+
         # Esc退出开关
         self._esc_action = QAction("连按3次Esc可退出", menu, checkable=True)
         self._esc_action.setChecked(self._config.get("esc_exit", DEFAULT_ESC_EXIT))
@@ -202,7 +258,7 @@ class SedentaryReminder:
         # 显示启动通知
         self._tray.showMessage(
             "久坐提醒已启动",
-            f"每{REMINDER_INTERVAL_MINUTES}分钟提醒你起身运动\n"
+            f"每{current_interval}分钟提醒你起身运动\n"
             f"工作时间：{WORK_START_HOUR}:00 - {WORK_END_HOUR}:00\n"
             f"覆盖全屏：{current_seconds}秒",
             QSystemTrayIcon.Information,
@@ -229,6 +285,28 @@ class SedentaryReminder:
         self._tray.showMessage(
             "设置已更新",
             f"运动时长：{minutes} 分钟",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
+    def _set_exercise_prompt(self, prompt):
+        """设置运动提示语"""
+        self._config["exercise_prompt"] = prompt
+        save_config(self._config)
+        self._tray.showMessage(
+            "设置已更新",
+            f"运动提示语：{prompt}",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
+    def _set_reminder_interval(self, minutes):
+        """设置提醒间隔"""
+        self._config["reminder_minutes"] = minutes
+        save_config(self._config)
+        self._tray.showMessage(
+            "设置已更新",
+            f"提醒间隔：{minutes} 分钟",
             QSystemTrayIcon.Information,
             2000
         )
@@ -272,7 +350,8 @@ class SedentaryReminder:
 
         # 检查是否到了提醒时间
         elapsed = datetime.now() - self._last_reminder_time
-        if elapsed >= timedelta(minutes=REMINDER_INTERVAL_MINUTES):
+        interval = self._config.get("reminder_minutes", DEFAULT_REMINDER_MINUTES)
+        if elapsed >= timedelta(minutes=interval):
             self._show_bunny()
 
     def _show_bunny(self):
@@ -285,7 +364,8 @@ class SedentaryReminder:
         seconds = self._config.get("fullscreen_seconds", DEFAULT_FULLSCREEN_SECONDS)
         exercise = self._config.get("exercise_minutes", DEFAULT_EXERCISE_MINUTES)
         esc_exit = self._config.get("esc_exit", DEFAULT_ESC_EXIT)
-        self._bunny_widget = BunnyWidget(grow_total_seconds=seconds, exercise_minutes=exercise, esc_exit=esc_exit)
+        prompt = self._config.get("exercise_prompt", DEFAULT_EXERCISE_PROMPT)
+        self._bunny_widget = BunnyWidget(grow_total_seconds=seconds, exercise_minutes=exercise, esc_exit=esc_exit, exercise_prompt=prompt)
         self._bunny_widget.closed_by_user.connect(self._on_bunny_dismissed)
         self._bunny_widget.show()
 
@@ -307,7 +387,8 @@ class SedentaryReminder:
         else:
             self._pause_action.setText("暂停提醒")
             self._last_reminder_time = datetime.now()
-            self._tray.showMessage("提醒已恢复", f"每{REMINDER_INTERVAL_MINUTES}分钟提醒", QSystemTrayIcon.Information, 2000)
+            interval = self._config.get("reminder_minutes", DEFAULT_REMINDER_MINUTES)
+            self._tray.showMessage("提醒已恢复", f"每{interval}分钟提醒", QSystemTrayIcon.Information, 2000)
 
     def _quit(self):
         """退出程序"""
