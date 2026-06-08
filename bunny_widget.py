@@ -312,7 +312,6 @@ class BunnyWidget(QWidget):
         self.raise_()
         self.activateWindow()
         self._start_force_topmost()
-        self._enable_blur_behind()
 
         # 隐藏按钮，更新文字
         self._btn.hide()

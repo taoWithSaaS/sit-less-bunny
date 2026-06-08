@@ -6,6 +6,7 @@
 import sys
 import json
 import os
+import winreg
 from datetime import datetime, timedelta
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen
@@ -13,6 +14,50 @@ from PyQt5.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QAction, QActionGroup, QWidget
 )
 from bunny_widget import BunnyWidget
+
+
+# 开机启动注册表
+_AUTOSTART_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_AUTOSTART_REG_NAME = "SedentaryReminderBunny"
+
+
+def _get_launch_command() -> str:
+    """获取开机启动命令"""
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "main.py"))
+    # 使用 pythonw 避免弹出控制台窗口
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.exists(pythonw):
+        pythonw = sys.executable
+    return f'"{pythonw}" "{script_path}"'
+
+
+def is_autostart_enabled() -> bool:
+    """检查是否已设置开机启动"""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_REG_KEY, 0, winreg.KEY_READ)
+        winreg.QueryValueEx(key, _AUTOSTART_REG_NAME)
+        winreg.CloseKey(key)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
+def set_autostart(enable: bool):
+    """设置或取消开机启动"""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_REG_KEY, 0, winreg.KEY_SET_VALUE)
+        if enable:
+            winreg.SetValueEx(key, _AUTOSTART_REG_NAME, 0, winreg.REG_SZ, _get_launch_command())
+        else:
+            try:
+                winreg.DeleteValue(key, _AUTOSTART_REG_NAME)
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+    except OSError:
+        pass
 
 
 # 配置常量
@@ -282,6 +327,12 @@ class SedentaryReminder:
         self._esc_action.triggered.connect(self._toggle_esc_exit)
         menu.addAction(self._esc_action)
 
+        # 开机启动
+        self._autostart_action = QAction("开机自动启动", menu, checkable=True)
+        self._autostart_action.setChecked(is_autostart_enabled())
+        self._autostart_action.triggered.connect(self._toggle_autostart)
+        menu.addAction(self._autostart_action)
+
         menu.addSeparator()
 
         # 暂停/恢复
@@ -378,6 +429,12 @@ class SedentaryReminder:
             QSystemTrayIcon.Information,
             2000
         )
+
+    def _toggle_autostart(self, checked):
+        """切换开机启动"""
+        set_autostart(checked)
+        state = "开启" if checked else "关闭"
+        self._tray.showMessage("设置已更新", f"开机自动启动：{state}", QSystemTrayIcon.Information, 2000)
 
     def _toggle_esc_exit(self, checked):
         """切换Esc退出开关"""
