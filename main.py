@@ -1,0 +1,330 @@
+"""
+久坐提醒 - 跳舞小兔子
+每25分钟弹出可爱的跳舞兔子提醒起身运动
+工作时间：9:00 - 17:00
+"""
+import sys
+import json
+import os
+from datetime import datetime, timedelta
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen
+from PyQt5.QtWidgets import (
+    QApplication, QSystemTrayIcon, QMenu, QAction, QActionGroup, QWidget
+)
+from bunny_widget import BunnyWidget
+
+
+# 配置常量
+REMINDER_INTERVAL_MINUTES = 25
+WORK_START_HOUR = 9
+WORK_END_HOUR = 17
+CHECK_INTERVAL_MS = 30000  # 每30秒检查一次
+
+# 覆盖全屏速度预设（名称, 总秒数）
+FULLSCREEN_SPEED_PRESETS = [
+    ("极速 (10秒)", 10),
+    ("快速 (20秒)", 20),
+    ("普通 (40秒)", 40),
+    ("慢速 (60秒)", 60),
+]
+DEFAULT_FULLSCREEN_SECONDS = 20
+
+# 运动时长预设（名称, 分钟数）
+EXERCISE_DURATION_PRESETS = [
+    ("5 分钟", 5),
+    ("10 分钟", 10),
+    ("15 分钟", 15),
+    ("20 分钟", 20),
+]
+DEFAULT_EXERCISE_MINUTES = 10
+DEFAULT_ESC_EXIT = True
+
+# 配置文件路径
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def load_config():
+    """加载配置"""
+    defaults = {
+        "fullscreen_seconds": DEFAULT_FULLSCREEN_SECONDS,
+        "exercise_minutes": DEFAULT_EXERCISE_MINUTES,
+        "esc_exit": DEFAULT_ESC_EXIT,
+    }
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            defaults.update(data)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return defaults
+
+
+def save_config(cfg):
+    """保存配置"""
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+class SedentaryReminder:
+    """久坐提醒主程序"""
+
+    def __init__(self, app: QApplication):
+        self._app = app
+        self._bunny_widget = None
+        self._last_reminder_time = None
+        self._paused = False
+        self._config = load_config()
+
+        self._setup_tray()
+        self._setup_timer()
+
+        # 记录启动时间作为第一个周期的起点
+        if self._is_work_time():
+            self._last_reminder_time = datetime.now()
+
+    def _create_tray_icon(self) -> QIcon:
+        """生成一个简单的兔子图标"""
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 兔子头
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.setPen(QPen(QColor(200, 200, 210), 2))
+        painter.drawEllipse(12, 20, 40, 36)
+
+        # 耳朵
+        painter.drawEllipse(14, 2, 12, 28)
+        painter.drawEllipse(38, 2, 12, 28)
+        # 内耳
+        painter.setBrush(QBrush(QColor(255, 200, 210)))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(17, 6, 6, 20)
+        painter.drawEllipse(41, 6, 6, 20)
+
+        # 眼睛
+        painter.setBrush(QBrush(QColor(30, 30, 30)))
+        painter.drawEllipse(22, 32, 7, 7)
+        painter.drawEllipse(35, 32, 7, 7)
+        # 高光
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.drawEllipse(24, 33, 3, 3)
+        painter.drawEllipse(37, 33, 3, 3)
+
+        # 鼻子
+        painter.setBrush(QBrush(QColor(255, 182, 193)))
+        painter.drawEllipse(29, 39, 6, 5)
+
+        # 脸颊
+        painter.setBrush(QBrush(QColor(255, 180, 200, 100)))
+        painter.drawEllipse(14, 37, 10, 7)
+        painter.drawEllipse(40, 37, 10, 7)
+
+        painter.end()
+        return QIcon(pixmap)
+
+    def _setup_tray(self):
+        """设置系统托盘"""
+        self._tray = QSystemTrayIcon()
+        self._tray.setIcon(self._create_tray_icon())
+        self._tray.setToolTip("久坐提醒 - 跳舞小兔子")
+
+        menu = QMenu()
+
+        # 立即提醒
+        show_action = QAction("立即弹出兔子", menu)
+        show_action.triggered.connect(self._show_bunny_now)
+        menu.addAction(show_action)
+
+        menu.addSeparator()
+
+        # 覆盖全屏速度 子菜单
+        speed_menu = QMenu("覆盖全屏速度", menu)
+        speed_group = QActionGroup(speed_menu)
+        speed_group.setExclusive(True)
+
+        current_seconds = self._config.get("fullscreen_seconds", DEFAULT_FULLSCREEN_SECONDS)
+
+        for label, seconds in FULLSCREEN_SPEED_PRESETS:
+            action = QAction(label, speed_menu, checkable=True)
+            action.setData(seconds)
+            if seconds == current_seconds:
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, s=seconds, a=action: self._set_speed(s))
+            speed_group.addAction(action)
+            speed_menu.addAction(action)
+
+        menu.addMenu(speed_menu)
+
+        # 运动时长 子菜单
+        exercise_menu = QMenu("运动时长", menu)
+        exercise_group = QActionGroup(exercise_menu)
+        exercise_group.setExclusive(True)
+
+        current_exercise = self._config.get("exercise_minutes", DEFAULT_EXERCISE_MINUTES)
+
+        for label, minutes in EXERCISE_DURATION_PRESETS:
+            action = QAction(label, exercise_menu, checkable=True)
+            action.setData(minutes)
+            if minutes == current_exercise:
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, m=minutes: self._set_exercise_duration(m))
+            exercise_group.addAction(action)
+            exercise_menu.addAction(action)
+
+        menu.addMenu(exercise_menu)
+
+        # Esc退出开关
+        self._esc_action = QAction("连按3次Esc可退出", menu, checkable=True)
+        self._esc_action.setChecked(self._config.get("esc_exit", DEFAULT_ESC_EXIT))
+        self._esc_action.triggered.connect(self._toggle_esc_exit)
+        menu.addAction(self._esc_action)
+
+        menu.addSeparator()
+
+        # 暂停/恢复
+        self._pause_action = QAction("暂停提醒", menu)
+        self._pause_action.triggered.connect(self._toggle_pause)
+        menu.addAction(self._pause_action)
+
+        menu.addSeparator()
+
+        # 退出
+        quit_action = QAction("退出", menu)
+        quit_action.triggered.connect(self._quit)
+        menu.addAction(quit_action)
+
+        self._tray.setContextMenu(menu)
+        self._tray.show()
+
+        # 显示启动通知
+        self._tray.showMessage(
+            "久坐提醒已启动",
+            f"每{REMINDER_INTERVAL_MINUTES}分钟提醒你起身运动\n"
+            f"工作时间：{WORK_START_HOUR}:00 - {WORK_END_HOUR}:00\n"
+            f"覆盖全屏：{current_seconds}秒",
+            QSystemTrayIcon.Information,
+            3000
+        )
+
+    def _set_speed(self, seconds):
+        """设置覆盖全屏速度"""
+        self._config["fullscreen_seconds"] = seconds
+        save_config(self._config)
+        # 找到对应的标签名
+        label = next((l for l, s in FULLSCREEN_SPEED_PRESETS if s == seconds), f"{seconds}秒")
+        self._tray.showMessage(
+            "设置已更新",
+            f"覆盖全屏速度：{label}",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
+    def _set_exercise_duration(self, minutes):
+        """设置运动时长"""
+        self._config["exercise_minutes"] = minutes
+        save_config(self._config)
+        self._tray.showMessage(
+            "设置已更新",
+            f"运动时长：{minutes} 分钟",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
+    def _toggle_esc_exit(self, checked):
+        """切换Esc退出开关"""
+        self._config["esc_exit"] = checked
+        save_config(self._config)
+        state = "开启" if checked else "关闭"
+        self._tray.showMessage("设置已更新", f"连按3次Esc退出：{state}", QSystemTrayIcon.Information, 2000)
+
+    def _setup_timer(self):
+        """设置定时检查器"""
+        self._check_timer = QTimer()
+        self._check_timer.timeout.connect(self._check_reminder)
+        self._check_timer.start(CHECK_INTERVAL_MS)
+
+    def _is_work_time(self) -> bool:
+        """当前是否在工作时间内"""
+        now = datetime.now()
+        return WORK_START_HOUR <= now.hour < WORK_END_HOUR
+
+    def _check_reminder(self):
+        """定时检查是否需要弹出提醒"""
+        if self._paused:
+            return
+
+        if not self._is_work_time():
+            # 不在工作时间，重置计时
+            self._last_reminder_time = None
+            return
+
+        # 如果刚进入工作时间，初始化计时起点
+        if self._last_reminder_time is None:
+            self._last_reminder_time = datetime.now()
+            return
+
+        # 如果兔子已经在显示，不要重复弹出
+        if self._bunny_widget is not None and self._bunny_widget.isVisible():
+            return
+
+        # 检查是否到了提醒时间
+        elapsed = datetime.now() - self._last_reminder_time
+        if elapsed >= timedelta(minutes=REMINDER_INTERVAL_MINUTES):
+            self._show_bunny()
+
+    def _show_bunny(self):
+        """显示跳舞兔子"""
+        # 清理旧的
+        if self._bunny_widget is not None:
+            self._bunny_widget.close()
+            self._bunny_widget.deleteLater()
+
+        seconds = self._config.get("fullscreen_seconds", DEFAULT_FULLSCREEN_SECONDS)
+        exercise = self._config.get("exercise_minutes", DEFAULT_EXERCISE_MINUTES)
+        esc_exit = self._config.get("esc_exit", DEFAULT_ESC_EXIT)
+        self._bunny_widget = BunnyWidget(grow_total_seconds=seconds, exercise_minutes=exercise, esc_exit=esc_exit)
+        self._bunny_widget.closed_by_user.connect(self._on_bunny_dismissed)
+        self._bunny_widget.show()
+
+    def _show_bunny_now(self):
+        """立即显示兔子（菜单操作）"""
+        self._show_bunny()
+
+    def _on_bunny_dismissed(self):
+        """用户点击了去运动，重置计时器"""
+        self._last_reminder_time = datetime.now()
+        self._bunny_widget = None
+
+    def _toggle_pause(self):
+        """切换暂停状态"""
+        self._paused = not self._paused
+        if self._paused:
+            self._pause_action.setText("恢复提醒")
+            self._tray.showMessage("提醒已暂停", "点击恢复提醒", QSystemTrayIcon.Information, 2000)
+        else:
+            self._pause_action.setText("暂停提醒")
+            self._last_reminder_time = datetime.now()
+            self._tray.showMessage("提醒已恢复", f"每{REMINDER_INTERVAL_MINUTES}分钟提醒", QSystemTrayIcon.Information, 2000)
+
+    def _quit(self):
+        """退出程序"""
+        if self._bunny_widget:
+            self._bunny_widget._can_close = True
+            self._bunny_widget.close()
+        self._tray.hide()
+        self._app.quit()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)  # 关闭窗口不退出，靠托盘管理
+
+    reminder = SedentaryReminder(app)
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()
