@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QHBoxLayout, QSizePolicy
 )
 import winsound
+import ctypes
 from bunny_renderer import BunnyRenderer
 
 
@@ -57,6 +58,22 @@ class BunnyWidget(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setFixedSize(self.INITIAL_WIDTH, self.INITIAL_HEIGHT)
 
+    def _cute_font(self, size=13):
+        """获取可爱风格字体，优先使用圆体"""
+        candidates = ["站酷快乐体2016修订版", "站酷快乐体", "幼圆", "华文彩云",
+                       "Microsoft YaHei UI", "微软雅黑"]
+        font_db = QFontDatabase()
+        families = font_db.families()
+        for name in candidates:
+            if name in families:
+                font = QFont(name, size)
+                font.setBold(True)
+                return font
+        font = QFont()
+        font.setPixelSize(size)
+        font.setBold(True)
+        return font
+
     def _setup_ui(self):
         """创建UI：提示文字 + 按钮"""
         layout = QVBoxLayout(self)
@@ -70,45 +87,52 @@ class BunnyWidget(QWidget):
         # 提示文字
         self._label = QLabel(f"该去运动啦！\n{self._exercise_prompt}")
         self._label.setAlignment(Qt.AlignCenter)
+        self._label.setFont(self._cute_font(14))
         self._label.setStyleSheet("""
             QLabel {
                 color: #ff6b8a;
-                font-size: 13px;
-                font-weight: bold;
                 background: transparent;
                 padding: 2px;
             }
         """)
+        # 文字立体阴影
+        label_shadow = QGraphicsDropShadowEffect()
+        label_shadow.setBlurRadius(8)
+        label_shadow.setColor(QColor(255, 107, 138, 80))
+        label_shadow.setOffset(1, 2)
+        self._label.setGraphicsEffect(label_shadow)
         layout.addWidget(self._label)
 
         # 按钮
         self._btn = QPushButton("🏃 去运动啦！")
         self._btn.setCursor(Qt.PointingHandCursor)
+        self._btn.setFont(self._cute_font(14))
         self._btn.setStyleSheet("""
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #ff6b8a, stop:1 #ff8e53);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ff8fab, stop:0.5 #ff6b8a, stop:1 #e8557a);
                 color: white;
-                border: none;
-                border-radius: 18px;
+                border: 2px solid rgba(255,255,255,0.3);
+                border-radius: 20px;
                 padding: 10px 24px;
-                font-size: 14px;
-                font-weight: bold;
                 min-height: 20px;
             }
             QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #ff8e53, stop:1 #ff6b8a);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ffb3c6, stop:0.5 #ff8e9e, stop:1 #ff6b8a);
+                border: 2px solid rgba(255,255,255,0.5);
             }
             QPushButton:pressed {
                 background: #e55a7a;
+                padding-top: 12px;
+                padding-bottom: 8px;
             }
         """)
-        # 按钮阴影
+        # 按钮立体阴影
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(15)
-        shadow.setColor(QColor(255, 107, 138, 120))
-        shadow.setOffset(0, 4)
+        shadow.setBlurRadius(18)
+        shadow.setColor(QColor(255, 80, 120, 140))
+        shadow.setOffset(0, 5)
         self._btn.setGraphicsEffect(shadow)
         self._btn.clicked.connect(self._on_go_exercise)
         layout.addWidget(self._btn, alignment=Qt.AlignCenter)
@@ -147,6 +171,30 @@ class BunnyWidget(QWidget):
         self._entrance_anim.setEndValue(QRect(start_x, end_y, self.width(), self.height()))
         self._entrance_anim.setEasingCurve(QEasingCurve.OutBounce)
         self._entrance_anim.start()
+
+    def _start_force_topmost(self):
+        """启动强制置顶定时器，防止任务栏抢焦点"""
+        if not hasattr(self, '_topmost_timer') or self._topmost_timer is None:
+            self._topmost_timer = QTimer(self)
+            self._topmost_timer.timeout.connect(self._force_raise)
+            self._topmost_timer.start(500)
+
+    def _stop_force_topmost(self):
+        """停止强制置顶"""
+        if hasattr(self, '_topmost_timer') and self._topmost_timer:
+            self._topmost_timer.stop()
+            self._topmost_timer = None
+
+    def _force_raise(self):
+        """强制窗口置顶"""
+        self.raise_()
+        self.activateWindow()
+        # 调用 Windows API 强制前台
+        hwnd = int(self.winId())
+        ctypes.windll.user32.SetWindowPos(
+            hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002  # HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE
+        )
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
 
     def _next_frame(self):
         """切换到下一帧动画"""
@@ -213,29 +261,35 @@ class BunnyWidget(QWidget):
             self.showFullScreen()
             self.raise_()
             self.activateWindow()
+            self._start_force_topmost()
+
             # 铺满后调整字体大小
+            self._label.setFont(self._cute_font(28))
             self._label.setStyleSheet("""
                 QLabel {
                     color: #ff6b8a;
-                    font-size: 28px;
-                    font-weight: bold;
                     background: transparent;
                 }
             """)
+            self._btn.setFont(self._cute_font(24))
             self._btn.setStyleSheet("""
                 QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #ff6b8a, stop:1 #ff8e53);
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #ff8fab, stop:0.5 #ff6b8a, stop:1 #e8557a);
                     color: white;
-                    border: none;
-                    border-radius: 30px;
+                    border: 2px solid rgba(255,255,255,0.3);
+                    border-radius: 34px;
                     padding: 20px 50px;
-                    font-size: 24px;
-                    font-weight: bold;
                 }
                 QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #ff8e53, stop:1 #ff6b8a);
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #ffb3c6, stop:0.5 #ff8e9e, stop:1 #ff6b8a);
+                    border: 2px solid rgba(255,255,255,0.5);
+                }
+                QPushButton:pressed {
+                    background: #e55a7a;
+                    padding-top: 22px;
+                    padding-bottom: 18px;
                 }
             """)
 
@@ -257,6 +311,8 @@ class BunnyWidget(QWidget):
         self.showFullScreen()
         self.raise_()
         self.activateWindow()
+        self._start_force_topmost()
+        self._enable_blur_behind()
 
         # 隐藏按钮，更新文字
         self._btn.hide()
@@ -280,41 +336,47 @@ class BunnyWidget(QWidget):
         """更新倒计时显示"""
         mins = self._exercise_remaining // 60
         secs = self._exercise_remaining % 60
-        self._label.setText(f"运动中！别偷懒~\n\n剩余 {mins:02d}:{secs:02d}")
+        self._label.setText(f"运动中！别偷懒~\n\n⏱ {mins:02d}:{secs:02d}")
+        self._label.setFont(self._cute_font(42))
         self._label.setStyleSheet("""
             QLabel {
                 color: #ff6b8a;
-                font-size: 42px;
-                font-weight: bold;
                 background: transparent;
             }
         """)
 
     def _finish_exercise(self):
         """运动倒计时结束，显示回来工作按钮"""
-        # 播放系统提示音提醒运动结束
-        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         self._in_exercise_mode = False
+
+        # 每3秒循环播放系统提示音，直到用户点击按钮
+        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        self._beep_timer = QTimer(self)
+        self._beep_timer.timeout.connect(lambda: winsound.MessageBeep(winsound.MB_ICONEXCLAMATION))
+        self._beep_timer.start(3000)
 
         # 更新文字提示
         self._label.setText("运动结束！休息得不错~")
+        self._label.setFont(self._cute_font(42))
         self._label.setStyleSheet("""
             QLabel {
                 color: #4CAF50;
-                font-size: 42px;
-                font-weight: bold;
                 background: transparent;
             }
         """)
 
         # 显示"我回来工作啦"按钮
         self._btn.setText("💪 我回来工作啦！")
+        self._btn.setFont(self._cute_font(24))
         self._btn.disconnect()
         self._btn.clicked.connect(self._on_back_to_work)
         self._btn.show()
 
     def _on_back_to_work(self):
         """用户点击回来工作，关闭窗口并恢复计时"""
+        if hasattr(self, '_beep_timer') and self._beep_timer:
+            self._beep_timer.stop()
+        self._stop_force_topmost()
         self._can_close = True
         self._anim_timer.stop()
         self.closed_by_user.emit()
@@ -354,6 +416,7 @@ class BunnyWidget(QWidget):
 
     def _force_exit(self):
         """连按3次Esc强制退出"""
+        self._stop_force_topmost()
         self._can_close = True
         self._in_exercise_mode = False
         self._anim_timer.stop()
@@ -369,8 +432,7 @@ class BunnyWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         # 绘制半透明背景圆角矩形
-        bg_color = QColor(255, 255, 255, 200)
-        painter.setBrush(bg_color)
+        painter.setBrush(QColor(255, 255, 255, 200))
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(self.rect(), 20, 20)
 

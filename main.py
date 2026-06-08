@@ -17,9 +17,17 @@ from bunny_widget import BunnyWidget
 
 # 配置常量
 DEFAULT_REMINDER_MINUTES = 25
-WORK_START_HOUR = 9
-WORK_END_HOUR = 17
+DEFAULT_WORK_START = "8:30"
+DEFAULT_WORK_END = "18:00"
 CHECK_INTERVAL_MS = 30000  # 每30秒检查一次
+
+# 工作时间预设
+WORK_START_PRESETS = [
+    "8:30", "9:00", "9:30", "10:00",
+]
+WORK_END_PRESETS = [
+    "17:00", "17:30", "18:00", "18:30", "19:00", "19:30", "20:00",
+]
 
 # 覆盖全屏速度预设（名称, 总秒数）
 FULLSCREEN_SPEED_PRESETS = [
@@ -70,6 +78,8 @@ def load_config():
         "esc_exit": DEFAULT_ESC_EXIT,
         "reminder_minutes": DEFAULT_REMINDER_MINUTES,
         "exercise_prompt": DEFAULT_EXERCISE_PROMPT,
+        "work_start": DEFAULT_WORK_START,
+        "work_end": DEFAULT_WORK_END,
     }
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -232,6 +242,40 @@ class SedentaryReminder:
 
         menu.addMenu(prompt_menu)
 
+        # 工作开始时间 子菜单
+        start_menu = QMenu("工作开始时间", menu)
+        start_group = QActionGroup(start_menu)
+        start_group.setExclusive(True)
+
+        current_start = self._config.get("work_start", DEFAULT_WORK_START)
+
+        for t in WORK_START_PRESETS:
+            action = QAction(t, start_menu, checkable=True)
+            if t == current_start:
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, v=t: self._set_work_start(v))
+            start_group.addAction(action)
+            start_menu.addAction(action)
+
+        menu.addMenu(start_menu)
+
+        # 工作结束时间 子菜单
+        end_menu = QMenu("工作结束时间", menu)
+        end_group = QActionGroup(end_menu)
+        end_group.setExclusive(True)
+
+        current_end = self._config.get("work_end", DEFAULT_WORK_END)
+
+        for t in WORK_END_PRESETS:
+            action = QAction(t, end_menu, checkable=True)
+            if t == current_end:
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, v=t: self._set_work_end(v))
+            end_group.addAction(action)
+            end_menu.addAction(action)
+
+        menu.addMenu(end_menu)
+
         # Esc退出开关
         self._esc_action = QAction("连按3次Esc可退出", menu, checkable=True)
         self._esc_action.setChecked(self._config.get("esc_exit", DEFAULT_ESC_EXIT))
@@ -259,7 +303,7 @@ class SedentaryReminder:
         self._tray.showMessage(
             "久坐提醒已启动",
             f"每{current_interval}分钟提醒你起身运动\n"
-            f"工作时间：{WORK_START_HOUR}:00 - {WORK_END_HOUR}:00\n"
+            f"工作时间：{current_start} - {current_end}\n"
             f"覆盖全屏：{current_seconds}秒",
             QSystemTrayIcon.Information,
             3000
@@ -300,6 +344,30 @@ class SedentaryReminder:
             2000
         )
 
+    def _set_work_start(self, time_str):
+        """设置工作开始时间"""
+        self._config["work_start"] = time_str
+        save_config(self._config)
+        end = self._config.get("work_end", DEFAULT_WORK_END)
+        self._tray.showMessage(
+            "设置已更新",
+            f"工作时间：{time_str} - {end}",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
+    def _set_work_end(self, time_str):
+        """设置工作结束时间"""
+        self._config["work_end"] = time_str
+        save_config(self._config)
+        start = self._config.get("work_start", DEFAULT_WORK_START)
+        self._tray.showMessage(
+            "设置已更新",
+            f"工作时间：{start} - {time_str}",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
     def _set_reminder_interval(self, minutes):
         """设置提醒间隔"""
         self._config["reminder_minutes"] = minutes
@@ -324,10 +392,19 @@ class SedentaryReminder:
         self._check_timer.timeout.connect(self._check_reminder)
         self._check_timer.start(CHECK_INTERVAL_MS)
 
+    @staticmethod
+    def _parse_time(time_str):
+        """解析 'H:MM' 格式时间为 (hour, minute)"""
+        parts = time_str.split(":")
+        return int(parts[0]), int(parts[1])
+
     def _is_work_time(self) -> bool:
         """当前是否在工作时间内"""
         now = datetime.now()
-        return WORK_START_HOUR <= now.hour < WORK_END_HOUR
+        now_minutes = now.hour * 60 + now.minute
+        start_h, start_m = self._parse_time(self._config.get("work_start", DEFAULT_WORK_START))
+        end_h, end_m = self._parse_time(self._config.get("work_end", DEFAULT_WORK_END))
+        return start_h * 60 + start_m <= now_minutes < end_h * 60 + end_m
 
     def _check_reminder(self):
         """定时检查是否需要弹出提醒"""
