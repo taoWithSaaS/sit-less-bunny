@@ -1,4 +1,4 @@
-# sit-less-bunny 🐰
+# oh-my-body 🐰
 
 一只赖在你屏幕上的跳舞兔子，逼你起身运动。
 
@@ -23,8 +23,8 @@
 
 ```bash
 # 1. 克隆
-git clone git@github.com:taoWithSaaS/-sit-less-bunny.git
-cd sit-less-bunny
+git clone git@github.com:taoWithSaaS/oh-my-body.git
+cd oh-my-body
 
 # 2. 安装依赖
 pip install -r requirements.txt
