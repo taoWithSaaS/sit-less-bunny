@@ -1,7 +1,7 @@
 """
 久坐提醒 - 跳舞小兔子
 每25分钟弹出可爱的跳舞兔子提醒起身运动
-工作时间：9:00 - 17:00
+支持工作时间限制或全天候模式
 """
 import sys
 import json
@@ -23,6 +23,9 @@ _AUTOSTART_REG_NAME = "SedentaryReminderBunny"
 
 def _get_launch_command() -> str:
     """获取开机启动命令"""
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}"'
+
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "main.py"))
     # 使用 pythonw 避免弹出控制台窗口
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
@@ -35,16 +38,16 @@ def is_autostart_enabled() -> bool:
     """检查是否已设置开机启动"""
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_REG_KEY, 0, winreg.KEY_READ)
-        winreg.QueryValueEx(key, _AUTOSTART_REG_NAME)
+        value, _ = winreg.QueryValueEx(key, _AUTOSTART_REG_NAME)
         winreg.CloseKey(key)
-        return True
+        return value == _get_launch_command()
     except FileNotFoundError:
         return False
     except OSError:
         return False
 
 
-def set_autostart(enable: bool):
+def set_autostart(enable: bool) -> bool:
     """设置或取消开机启动"""
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_REG_KEY, 0, winreg.KEY_SET_VALUE)
@@ -56,8 +59,9 @@ def set_autostart(enable: bool):
             except FileNotFoundError:
                 pass
         winreg.CloseKey(key)
+        return True
     except OSError:
-        pass
+        return False
 
 
 # 配置常量
@@ -92,6 +96,7 @@ EXERCISE_DURATION_PRESETS = [
 ]
 DEFAULT_EXERCISE_MINUTES = 10
 DEFAULT_ESC_EXIT = True
+DEFAULT_ALWAYS_ON = False
 DEFAULT_EXERCISE_PROMPT = "打开抖音肩颈操直播跟练吧~"
 
 # 运动提示语预设
@@ -112,7 +117,12 @@ REMINDER_INTERVAL_PRESETS = [
 ]
 
 # 配置文件路径
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+# frozen exe 时 __file__ 指向 PyInstaller 临时解压目录，用 sys.executable 取 exe 真实位置
+if getattr(sys, "frozen", False):
+    _BASE_DIR = os.path.dirname(sys.executable)
+else:
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(_BASE_DIR, "config.json")
 
 
 def load_config():
@@ -125,6 +135,7 @@ def load_config():
         "exercise_prompt": DEFAULT_EXERCISE_PROMPT,
         "work_start": DEFAULT_WORK_START,
         "work_end": DEFAULT_WORK_END,
+        "always_on": DEFAULT_ALWAYS_ON,
     }
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -321,6 +332,17 @@ class SedentaryReminder:
 
         menu.addMenu(end_menu)
 
+        # 不限工作时间开关
+        always_on = self._config.get("always_on", DEFAULT_ALWAYS_ON)
+        self._always_on_action = QAction("不限工作时间（开机即提醒）", menu, checkable=True)
+        self._always_on_action.setChecked(always_on)
+        start_menu.setEnabled(not always_on)
+        end_menu.setEnabled(not always_on)
+        self._always_on_action.triggered.connect(
+            lambda checked, sm=start_menu, em=end_menu: self._toggle_always_on(checked, sm, em)
+        )
+        menu.addAction(self._always_on_action)
+
         # Esc退出开关
         self._esc_action = QAction("连按3次Esc可退出", menu, checkable=True)
         self._esc_action.setChecked(self._config.get("esc_exit", DEFAULT_ESC_EXIT))
@@ -351,10 +373,14 @@ class SedentaryReminder:
         self._tray.show()
 
         # 显示启动通知
+        if always_on:
+            time_hint = "全天候提醒（不限时间）"
+        else:
+            time_hint = f"工作时间：{current_start} - {current_end}"
         self._tray.showMessage(
             "久坐提醒已启动",
             f"每{current_interval}分钟提醒你起身运动\n"
-            f"工作时间：{current_start} - {current_end}\n"
+            f"{time_hint}\n"
             f"覆盖全屏：{current_seconds}秒",
             QSystemTrayIcon.Information,
             3000
@@ -419,6 +445,30 @@ class SedentaryReminder:
             2000
         )
 
+    def _toggle_always_on(self, checked, start_menu, end_menu):
+        """切换"不限工作时间"模式"""
+        self._config["always_on"] = checked
+        save_config(self._config)
+        start_menu.setEnabled(not checked)
+        end_menu.setEnabled(not checked)
+        if checked:
+            self._last_reminder_time = datetime.now()
+            self._tray.showMessage(
+                "设置已更新",
+                "全天候提醒已开启，不再限制工作时间",
+                QSystemTrayIcon.Information,
+                2000
+            )
+        else:
+            start = self._config.get("work_start", DEFAULT_WORK_START)
+            end = self._config.get("work_end", DEFAULT_WORK_END)
+            self._tray.showMessage(
+                "设置已更新",
+                f"已恢复工作时间限制：{start} - {end}",
+                QSystemTrayIcon.Information,
+                2000
+            )
+
     def _set_reminder_interval(self, minutes):
         """设置提醒间隔"""
         self._config["reminder_minutes"] = minutes
@@ -432,7 +482,13 @@ class SedentaryReminder:
 
     def _toggle_autostart(self, checked):
         """切换开机启动"""
-        set_autostart(checked)
+        if not set_autostart(checked):
+            self._autostart_action.blockSignals(True)
+            self._autostart_action.setChecked(is_autostart_enabled())
+            self._autostart_action.blockSignals(False)
+            self._tray.showMessage("设置失败", "无法更新开机自动启动，请检查注册表权限", QSystemTrayIcon.Warning, 3000)
+            return
+
         state = "开启" if checked else "关闭"
         self._tray.showMessage("设置已更新", f"开机自动启动：{state}", QSystemTrayIcon.Information, 2000)
 
@@ -457,6 +513,8 @@ class SedentaryReminder:
 
     def _is_work_time(self) -> bool:
         """当前是否在工作时间内"""
+        if self._config.get("always_on", DEFAULT_ALWAYS_ON):
+            return True
         now = datetime.now()
         now_minutes = now.hour * 60 + now.minute
         start_h, start_m = self._parse_time(self._config.get("work_start", DEFAULT_WORK_START))
