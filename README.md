@@ -19,7 +19,17 @@
   o_(")(")
 ```
 
-## 快速开始
+## Windows 下载使用
+
+[下载最新版 oh-my-body.exe](https://github.com/taoWithSaaS/oh-my-body/releases/latest/download/oh-my-body.exe) · [查看版本说明](https://github.com/taoWithSaaS/oh-my-body/releases/latest)
+
+适用于 Windows 10/11 的 64 位系统，下载后双击运行，无需安装 Python 或额外依赖。请将 EXE 放在有写入权限的固定文件夹中，设置会保存在 EXE 同目录的 `config.json` 中。
+
+启动后在系统托盘找到兔子图标，右键可设置提醒间隔、运动时长、工作时间和开机自动启动。默认每 25 分钟提醒一次；开启「不限工作时间」后，程序运行期间可全天候提醒。需要随 Windows 启动时，请另外开启「开机自动启动」。
+
+更新版本时，先从托盘菜单退出旧程序，再替换 EXE，保留同目录的 `config.json` 即可沿用设置。启用开机自动启动后，请保持 EXE 的文件名和位置不变；如需移动或改名，请在新位置重新开启开机自动启动。
+
+## 从源码运行
 
 ```bash
 # 1. 克隆
